@@ -340,6 +340,9 @@ public class ApiControllers {
 
     // If id == null --> will not check for that specific request
     private String[] checkIfProcessStarted(Long oib) {
+        if (!dirOfStartedCardMakingProcesses.exists()) {
+            dirOfStartedCardMakingProcesses.mkdir();
+        }
         File[] directoryListing = dirOfStartedCardMakingProcesses.listFiles();
         String[] splitData = null;
         if (directoryListing != null) {
@@ -371,6 +374,9 @@ public class ApiControllers {
     }
 
     private void startProcess(Client thisClient) {
+        if (!dirOfStartedCardMakingProcesses.exists()) {
+            dirOfStartedCardMakingProcesses.mkdir();
+        }
         String dataToSave = thisClient.getId() + fileDataDelimiter
                 + thisClient.getOib() + fileDataDelimiter
                 + thisClient.getFirstName() + fileDataDelimiter
@@ -401,6 +407,9 @@ public class ApiControllers {
     }
 
     private void stopProcess(Long oib) {
+        if (!dirOfStartedCardMakingProcesses.exists()) {
+            dirOfStartedCardMakingProcesses.mkdir();
+        }
         //Remove the file:
         File[] directoryListing = dirOfStartedCardMakingProcesses.listFiles();
         File toDelete = null;
