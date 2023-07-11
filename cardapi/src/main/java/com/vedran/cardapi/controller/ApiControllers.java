@@ -261,6 +261,13 @@ public class ApiControllers {
     public @ResponseBody Object startClientRequest(@PathVariable Long id) {
         try {
             Client thisClient = clientRepo.findById(id).get();
+            if (thisClient.getStatus() == Client.Status.STARTED) {
+                // This is same request:
+                startProcess(thisClient);
+                return "Process already started for Client request ID: " + thisClient.getId() + "."
+                        + "\nData: " + thisClient.getFirstName() + " " + thisClient.getLastName()
+                        + ", OIB: " + thisClient.getOib() + ", Status: " + thisClient.getStatus() + ".";
+            }
             //File check
             String[] fileData = checkIfProcessStarted(thisClient.getOib());
             if (fileData == null) {
@@ -270,14 +277,23 @@ public class ApiControllers {
             } else {
                 if (fileData[0] != null) {
                     try {
-                        Client thisOtherClient = clientRepo.findById(Long.parseLong(fileData[0])).get();
-                        if (Client.Status.INACTIVE == thisOtherClient.getStatus()) {
+                        if (Long.parseLong(fileData[0]) == id) {
+                            // This is same request:
                             thisClient.setStatus(Client.Status.STARTED);
                             startProcess(thisClient);
+                            //return at the end.
                         } else {
-                            return "Process already started for Client request ID: " + thisOtherClient.getId() + "."
-                                    + "\nData: " + thisOtherClient.getFirstName() + " " + thisOtherClient.getLastName()
-                                    + ", OIB: " + thisOtherClient.getOib() + ", Status: " + thisOtherClient.getStatus() + ".";
+                            Client thisOtherClient = clientRepo.findById(Long.parseLong(fileData[0])).get();
+                            if (Client.Status.INACTIVE == thisOtherClient.getStatus()) {
+                                // Start next one instead:
+                                thisClient.setStatus(Client.Status.STARTED);
+                                startProcess(thisClient);
+                                //return at the end.
+                            } else {
+                                return "Process already started for different Client request ID: " + thisOtherClient.getId() + "."
+                                        + "\nData: " + thisOtherClient.getFirstName() + " " + thisOtherClient.getLastName()
+                                        + ", OIB: " + thisOtherClient.getOib() + ", Status: " + thisOtherClient.getStatus() + ".";
+                            }
                         }
                     } catch (Exception e) {
                         //Start Process and Overwrite file
@@ -363,7 +379,7 @@ public class ApiControllers {
         if (client.getOib() == null) missingParams.add("oib");
         if (client.getFirstName() == null) missingParams.add("firstName");
         if (client.getLastName() == null) missingParams.add("lastName");
-        //if (client.getStatus() == null) missingParams.add("status");
+        //if (client.getStatus() == null) missingParams.add("status"); // Set by Db
 
         return missingParams;
     }
