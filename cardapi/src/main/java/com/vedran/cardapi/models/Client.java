@@ -24,5 +24,12 @@ public class Client {
     @Column
     private String lastName;
     @Column
-    private String status;
+    private Status status;
+
+    public enum Status {
+        REQUESTED,
+        STARTED,
+        INACTIVE
+    }
+
 }
