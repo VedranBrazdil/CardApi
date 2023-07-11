@@ -145,8 +145,16 @@ public class ApiControllers {
             return "ERROR: Client request not created/updated. Missing data: " + missingData;
         }
         if (id != null && id > 0) {
-            // Everything OK -> Save
+            // Everything OK -> Update process and then save
             client.setId(id);
+            try {
+                Client thisOldClient = clientRepo.findById(id).get();
+                //Update if process started:
+                updateProcess(client, thisOldClient.getOib());
+            } catch (Exception e) {
+                // There was no client on this ID. Do nothing.
+            }
+
             clientRepo.save(client);
             return client;
         }
@@ -159,6 +167,7 @@ public class ApiControllers {
     public @ResponseBody Object updateClientRequest(@PathVariable Long id, @RequestBody Client newData) {
         try {
             Client thisClient = clientRepo.findById(id).get();
+            Long oldOIB = thisClient.getOib();
             if (newData.getFirstName() != null)
                 thisClient.setFirstName(newData.getFirstName());
             if (newData.getLastName() != null)
@@ -167,7 +176,11 @@ public class ApiControllers {
                 thisClient.setStatus(newData.getStatus());
             if (newData.getOib() != null)
                 thisClient.setOib(newData.getOib());
+
             clientRepo.save(thisClient);
+
+            //Update if process started:
+            updateProcess(thisClient, oldOIB);
 
             return thisClient;
         } catch (Exception e) {
@@ -181,21 +194,21 @@ public class ApiControllers {
         try {
             // Delete Client Request:
             Client thisClient = clientRepo.findById(id).get();
-            clientRepo.deleteById(id);
             // Stop the process if started:
             String[] fileData = checkIfProcessStarted(thisClient.getOib());
             if (fileData != null) {
                 if (fileData[0] != null) {
                     try {
-                        if (Long.parseLong(fileData[0]) == thisClient.getId()) {
+                        if (Long.parseLong(fileData[0]) == id) {
                             //Set to inactive --> Delete
-                            stopProcess(Long.parseLong(fileData[0]));
+                            stopProcess(thisClient.getOib());
                         }
                     } catch (Exception e) {
                         // Do nothing
                     }
                 } // Else Do nothing
             }
+            clientRepo.deleteById(id);
             return "Client request ID: " + thisClient.getId() + " is deleted."
                     + "\nData: " + thisClient.getFirstName() + " " + thisClient.getLastName()
                     + ", OIB: " + thisClient.getOib() + ", Status: " + thisClient.getStatus() + ".";
@@ -225,6 +238,8 @@ public class ApiControllers {
                             + ", OIB: " + thisClient.getOib() + ", Status: " + thisClient.getStatus() + ".";
                 }
             }
+            //Set process to inactive --> Delete
+            stopProcess(oib);
             return output;
         } catch (Exception e) {
             return "ERROR: Client requests are not deleted. Internal Server Problem.";
@@ -280,7 +295,7 @@ public class ApiControllers {
                     try {
                         if (Long.parseLong(fileData[0]) == thisClient.getId()) {
                             //Set to inactive --> Delete
-                            stopProcess(Long.parseLong(fileData[0]));
+                            stopProcess(thisClient.getOib());
                         } else {
                             // Some other ID is started
                             return "Client request ID: " + thisClient.getId() + " not yet started.";
@@ -310,6 +325,7 @@ public class ApiControllers {
             if (directoryListing != null) {
                 for (File child : directoryListing) {
                     child.delete();
+                    System.out.println("File deleted: " + child.getName());
                 }
             }
         } catch (Exception e) {
@@ -319,7 +335,7 @@ public class ApiControllers {
     }
 
     private List<String> checkIfDataOk_Client(Client client) {
-        List<String> missingParams = new ArrayList<String>();
+        List<String> missingParams = new ArrayList<>();
         if (client.getOib() == null) missingParams.add("oib");
         if (client.getFirstName() == null) missingParams.add("firstName");
         if (client.getLastName() == null) missingParams.add("lastName");
@@ -340,11 +356,12 @@ public class ApiControllers {
 
     // If id == null --> will not check for that specific request
     private String[] checkIfProcessStarted(Long oib) {
+        String[] splitData = null;
         if (!dirOfStartedCardMakingProcesses.exists()) {
             dirOfStartedCardMakingProcesses.mkdir();
+            return splitData;
         }
         File[] directoryListing = dirOfStartedCardMakingProcesses.listFiles();
-        String[] splitData = null;
         if (directoryListing != null) {
             for (File child : directoryListing) {
                 //System.out.println(child.getName());
@@ -377,17 +394,18 @@ public class ApiControllers {
         if (!dirOfStartedCardMakingProcesses.exists()) {
             dirOfStartedCardMakingProcesses.mkdir();
         }
-        String dataToSave = thisClient.getId() + fileDataDelimiter
-                + thisClient.getOib() + fileDataDelimiter
-                + thisClient.getFirstName() + fileDataDelimiter
-                + thisClient.getLastName() + fileDataDelimiter
-                + thisClient.getStatus();
 
         //Cleanup first:
         stopProcess(thisClient.getOib());
 
         Timestamp timestamp = new Timestamp(System.currentTimeMillis());
         String fileName = thisClient.getOib() + fileNameDelimiter + timeFormat.format(timestamp) + ".txt";
+
+        String dataToSave = thisClient.getId() + fileDataDelimiter
+                + thisClient.getOib() + fileDataDelimiter
+                + thisClient.getFirstName() + fileDataDelimiter
+                + thisClient.getLastName() + fileDataDelimiter
+                + thisClient.getStatus();
 
         // Create a file:
         try {
@@ -406,22 +424,51 @@ public class ApiControllers {
         }
     }
 
+    private void updateProcess(Client thisClient, Long oldOIB) {
+        // You can pass oldOIB as null if not changed
+        boolean flagOibCh = false;
+        if (oldOIB != null && thisClient.getOib() != oldOIB) {
+            // OIB changed
+            flagOibCh = true;
+        } else {
+            // OIB is same
+            oldOIB = thisClient.getOib();
+        }
+        try {
+            //File check
+            String[] fileData = checkIfProcessStarted(oldOIB);
+            if (fileData != null) {
+                if (fileData[0] != null) {
+                    try {
+                        if (Long.parseLong(fileData[0]) == thisClient.getId()) {
+                            // Update Process:
+                            if (flagOibCh) stopProcess(oldOIB); // Change of OIB
+                            startProcess(thisClient);
+                            System.out.println("WARNING: Process updated but is now under new name.");
+                        }
+                    } catch (Exception e) {
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // Do nothing
+        }
+    }
+
     private void stopProcess(Long oib) {
         if (!dirOfStartedCardMakingProcesses.exists()) {
             dirOfStartedCardMakingProcesses.mkdir();
+            return; // There is no file for sure
         }
         //Remove the file:
         File[] directoryListing = dirOfStartedCardMakingProcesses.listFiles();
-        File toDelete = null;
         if (directoryListing != null) {
             for (File child : directoryListing) {
                 if (child.getName().contains(oib + "")) {
-                    toDelete = child;
+                    child.delete();
+                    System.out.println("File deleted: " + child.getName());
                     break;
                 }
-            }
-            if (toDelete != null) {
-                toDelete.delete();
             }
         }
     }
