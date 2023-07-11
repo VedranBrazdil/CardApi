@@ -48,14 +48,14 @@ public class ApiControllers {
                 + "\n"
                 + "\nUse POST /client/card/{id}/startProcess to start the creating card process."
                 + "\nUse DELETE /client/card/{id}/stopProcess to stop the creating card process."
-                + "\nUse DELETE /clients/stopProcess to stop all requests by Clients.";
+                + "\nUse DELETE /clients/killProcess to stop all requests by Clients.";
     }
 
     @GetMapping(path = "clients")
     public @ResponseBody Iterable<Client> getMeAllClients(
             @RequestParam(name = "lastName", required = false) String lastName,
             @RequestParam(name = "firstName", required = false) String firstName,
-            @RequestParam(name = "status", required = false) String status,
+            @RequestParam(name = "status", required = false) Client.Status status,
             @RequestParam(name = "oib", required = false) Long oib
     ) {
         // Check for all queries:
@@ -123,7 +123,7 @@ public class ApiControllers {
             }
             return "ERROR: Client request not created. Missing data: " + missingData;
         }
-
+        client.setStatus(Client.Status.REQUESTED); // init status
         clientRepo.save(client);
         return client;
     }
@@ -149,14 +149,20 @@ public class ApiControllers {
             client.setId(id);
             try {
                 Client thisOldClient = clientRepo.findById(id).get();
-                //Update if process started:
-                updateProcess(client, thisOldClient.getOib());
+                client.setStatus(thisOldClient.getStatus()); // Get existing status
+                if (!(Client.Status.REQUESTED == thisOldClient.getStatus())) {
+                    //Update if process started/inactive:
+                    updateProcess(client, thisOldClient.getOib());
+                }
             } catch (Exception e) {
-                // There was no client on this ID. Do nothing.
+                // There was no client on this ID.
+                client.setStatus(Client.Status.REQUESTED); // init status
             }
 
-            clientRepo.save(client);
-            return client;
+            // If new ID value is given:
+            Client newValue = clientRepo.save(client);
+
+            return newValue;
         }
 
         return "ERROR: Client request not created/updated. Missing data: id";
@@ -172,15 +178,17 @@ public class ApiControllers {
                 thisClient.setFirstName(newData.getFirstName());
             if (newData.getLastName() != null)
                 thisClient.setLastName(newData.getLastName());
-            if (newData.getStatus() != null)
-                thisClient.setStatus(newData.getStatus());
+            //if (newData.getStatus() != null)
+            //    thisClient.setStatus(newData.getStatus());
             if (newData.getOib() != null)
                 thisClient.setOib(newData.getOib());
 
             clientRepo.save(thisClient);
 
-            //Update if process started:
-            updateProcess(thisClient, oldOIB);
+            if (!(Client.Status.REQUESTED == thisClient.getStatus())) {
+                //Update if process started/inactive:
+                updateProcess(thisClient, oldOIB);
+            }
 
             return thisClient;
         } catch (Exception e) {
@@ -194,14 +202,15 @@ public class ApiControllers {
         try {
             // Delete Client Request:
             Client thisClient = clientRepo.findById(id).get();
+            thisClient.setStatus(Client.Status.INACTIVE);
             // Stop the process if started:
             String[] fileData = checkIfProcessStarted(thisClient.getOib());
             if (fileData != null) {
                 if (fileData[0] != null) {
                     try {
                         if (Long.parseLong(fileData[0]) == id) {
-                            //Set to inactive --> Delete
-                            stopProcess(thisClient.getOib());
+                            //Set to inactive
+                            updateProcess(thisClient, null);
                         }
                     } catch (Exception e) {
                         // Do nothing
@@ -237,6 +246,8 @@ public class ApiControllers {
                             + "\nData: " + thisClient.getFirstName() + " " + thisClient.getLastName()
                             + ", OIB: " + thisClient.getOib() + ", Status: " + thisClient.getStatus() + ".";
                 }
+                thisClient.setStatus(Client.Status.INACTIVE);
+                updateProcess(thisClient, null);
             }
             //Set process to inactive --> Delete
             stopProcess(oib);
@@ -254,25 +265,35 @@ public class ApiControllers {
             String[] fileData = checkIfProcessStarted(thisClient.getOib());
             if (fileData == null) {
                 //Start Process and Overwrite file
+                thisClient.setStatus(Client.Status.STARTED);
                 startProcess(thisClient);
             } else {
                 if (fileData[0] != null) {
                     try {
                         Client thisOtherClient = clientRepo.findById(Long.parseLong(fileData[0])).get();
-                        return "Process already started for Client request ID: " + thisOtherClient.getId() + "."
-                                + "\nData: " + thisOtherClient.getFirstName() + " " + thisOtherClient.getLastName()
-                                + ", OIB: " + thisOtherClient.getOib() + ", Status: " + thisOtherClient.getStatus() + ".";
+                        if (Client.Status.INACTIVE == thisOtherClient.getStatus()) {
+                            thisClient.setStatus(Client.Status.STARTED);
+                            startProcess(thisClient);
+                        } else {
+                            return "Process already started for Client request ID: " + thisOtherClient.getId() + "."
+                                    + "\nData: " + thisOtherClient.getFirstName() + " " + thisOtherClient.getLastName()
+                                    + ", OIB: " + thisOtherClient.getOib() + ", Status: " + thisOtherClient.getStatus() + ".";
+                        }
                     } catch (Exception e) {
                         //Start Process and Overwrite file
                         System.out.println("ERROR: File Corrupted. Will be overwritten.");
+                        thisClient.setStatus(Client.Status.STARTED);
                         startProcess(thisClient);
                     }
                 } else {
                     //Start Process and Overwrite file
                     System.out.println("ERROR: File Corrupted. Will be overwritten.");
+                    thisClient.setStatus(Client.Status.STARTED);
                     startProcess(thisClient);
                 }
             }
+
+            clientRepo.save(thisClient); //save new status
 
             return "Process started for Client request ID: " + thisClient.getId() + "."
                     + "\nData: " + thisClient.getFirstName() + " " + thisClient.getLastName()
@@ -286,6 +307,7 @@ public class ApiControllers {
     public @ResponseBody Object stopClientRequest(@PathVariable Long id) {
         try {
             Client thisClient = clientRepo.findById(id).get();
+            thisClient.setStatus(Client.Status.INACTIVE);
             //File check
             String[] fileData = checkIfProcessStarted(thisClient.getOib());
             if (fileData == null) {
@@ -294,8 +316,8 @@ public class ApiControllers {
                 if (fileData[0] != null) {
                     try {
                         if (Long.parseLong(fileData[0]) == thisClient.getId()) {
-                            //Set to inactive --> Delete
-                            stopProcess(thisClient.getOib());
+                            //Set to inactive
+                            updateProcess(thisClient, null);
                         } else {
                             // Some other ID is started
                             return "Client request ID: " + thisClient.getId() + " not yet started.";
@@ -308,6 +330,8 @@ public class ApiControllers {
                 }
             }
 
+            clientRepo.save(thisClient); //save new status
+
             return "Process stopped for Client request ID: " + thisClient.getId() + "."
                     + "\nData: " + thisClient.getFirstName() + " " + thisClient.getLastName()
                     + ", OIB: " + thisClient.getOib() + ", Status: " + thisClient.getStatus() + ".";
@@ -316,7 +340,7 @@ public class ApiControllers {
         }
     }
 
-    @DeleteMapping(path = "clients/stopProcess")
+    @DeleteMapping(path = "clients/killProcess")
     public @ResponseBody Object stopAllClientRequest() {
         try {
             //Remove the files:
@@ -339,7 +363,7 @@ public class ApiControllers {
         if (client.getOib() == null) missingParams.add("oib");
         if (client.getFirstName() == null) missingParams.add("firstName");
         if (client.getLastName() == null) missingParams.add("lastName");
-        if (client.getStatus() == null) missingParams.add("status");
+        //if (client.getStatus() == null) missingParams.add("status");
 
         return missingParams;
     }
@@ -381,7 +405,7 @@ public class ApiControllers {
                         System.out.println("ERROR: File " + child.getName() + " Corrupted.");
                     }
                 }
-                System.out.println("File found: " + child.getName());
+                //System.out.println("File found: " + child.getName());
             }
         } else {
             System.out.println("Missing folder: " + pathOfFolder);
@@ -472,5 +496,4 @@ public class ApiControllers {
             }
         }
     }
-
 }
